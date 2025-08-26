@@ -236,8 +236,11 @@ if us_proc is not None:
     show_summary(us_proc, "US Portfolio Summary", "^IXIC")
 
 # ---------------------- BENCHMARK COMPARISON ----------------------
+# ---------------------- BENCHMARK COMPARISON ----------------------
 st.subheader("📊 Portfolio vs Benchmarks")
+
 benchmarks = {"S&P 500": "^GSPC", "NASDAQ": "^IXIC", "NIFTY50": "^NSEI"}
+series_list = []
 
 def get_perf(ticker):
     try:
@@ -248,16 +251,35 @@ def get_perf(ticker):
     except Exception:
         return pd.Series(dtype=float)
 
-series_list = []
+# Add benchmark series
 for name, symbol in benchmarks.items():
     s = get_perf(symbol)
     if not s.empty:
         s.name = name
         series_list.append(s)
 
+# Add combined portfolio performance
+if combined_proc is not None and not combined_proc.empty:
+    try:
+        weights = combined_proc["Market Value"] / combined_proc["Market Value"].sum()
+        tickers = combined_proc["Ticker"].tolist()
+
+        prices = yf.download(tickers, period="1y", interval="1d", progress=False)["Close"]
+        if isinstance(prices, pd.Series):  # single ticker
+            prices = prices.to_frame(tickers[0])
+        rets = prices.pct_change().dropna()
+
+        port_ret = (rets * weights.values).sum(axis=1)
+        port_cum = (1 + port_ret).cumprod() - 1
+        port_cum.name = "Combined Portfolio"
+        series_list.append(port_cum)
+    except Exception:
+        st.warning("Could not fetch combined portfolio history for chart.")
+
+# Plot chart
 if series_list:
     chart_df = pd.concat(series_list, axis=1).reset_index().rename(columns={"index": "Date"})
-    long_df = chart_df.melt(id_vars="Date", var_name="Benchmark", value_name="Return")
+    long_df = chart_df.melt(id_vars="Date", var_name="Series", value_name="Return")
 
     chart = (
         alt.Chart(long_df)
@@ -265,14 +287,15 @@ if series_list:
         .encode(
             x="Date:T",
             y=alt.Y("Return:Q", axis=alt.Axis(format="%")),
-            color="Benchmark:N",
-            tooltip=["Date:T", "Benchmark:N", alt.Tooltip("Return:Q", format=".2%")],
+            color="Series:N",
+            tooltip=["Date:T", "Series:N", alt.Tooltip("Return:Q", format=".2%")],
         )
-        .properties(title="Benchmark Performance (1Y)")
+        .properties(title="Benchmark & Portfolio Performance (1Y)")
     )
     st.altair_chart(chart, use_container_width=True)
 else:
-    st.info("Benchmark data not available.")
+    st.info("Benchmark/portfolio data not available.")
+
 
 # ---------------------- PORTFOLIO TABS ----------------------
 if combined_proc is not None:
@@ -306,3 +329,4 @@ if combined_proc is not None:
         file_name="portfolio_summary.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
