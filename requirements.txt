@@ -5,3 +5,4 @@ numpy
 altair
 xlsxwriter
 streamlit-autorefresh
+statsmodels
