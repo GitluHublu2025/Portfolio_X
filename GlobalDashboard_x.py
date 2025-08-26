@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -6,7 +6,6 @@ import numpy as np
 import altair as alt
 from datetime import datetime
 from io import BytesIO
-import statsmodels.api as sm
 
 # ---------------------- AUTO-REFRESH ----------------------
 try:
@@ -113,33 +112,31 @@ def fetch_quotes(symbols):
     return quotes
 
 def calc_alpha_portfolio(portfolio_df, benchmark="^GSPC"):
-    """Calculate alpha of whole portfolio vs a benchmark using daily returns."""
+    """Calculate alpha of whole portfolio vs a benchmark using numpy (no statsmodels)."""
     try:
         if portfolio_df is None or portfolio_df.empty:
             return np.nan
 
-        # weights based on market value
         weights = portfolio_df["Market Value"] / portfolio_df["Market Value"].sum()
         tickers = portfolio_df["Ticker"].tolist()
 
-        # fetch historical prices
         prices = yf.download(tickers, period="1y", interval="1d", progress=False)["Close"]
         if isinstance(prices, pd.Series):  # single ticker
             prices = prices.to_frame(tickers[0])
         rets = prices.pct_change().dropna()
 
-        # portfolio returns
         port_ret = (rets * weights.values).sum(axis=1)
-
-        # benchmark returns
         bench = yf.download(benchmark, period="1y", interval="1d", progress=False)["Close"].pct_change().dropna()
 
         df = pd.concat([port_ret, bench], axis=1).dropna()
         df.columns = ["portfolio", "benchmark"]
 
-        X = sm.add_constant(df["benchmark"])
-        model = sm.OLS(df["portfolio"], X).fit()
-        return model.params["const"]
+        cov = np.cov(df["portfolio"], df["benchmark"])[0, 1]
+        var = np.var(df["benchmark"])
+        beta = cov / var if var > 0 else np.nan
+
+        alpha = df["portfolio"].mean() - beta * df["benchmark"].mean()
+        return alpha
     except Exception:
         return np.nan
 
