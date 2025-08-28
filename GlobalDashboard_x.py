@@ -238,6 +238,7 @@ if us_proc is not None:
 # ---------------------- BENCHMARK COMPARISON ----------------------
 # ---------------------- BENCHMARK COMPARISON ----------------------
 # ---------------------- BENCHMARK + PORTFOLIO PERFORMANCE ----------------------Added in Rev 2
+# ---------------------- BENCHMARK + PORTFOLIO PERFORMANCE ----------------------Added in Rev 4
 st.subheader("📊 Portfolio vs Benchmarks")
 benchmarks = {"S&P 500": "^GSPC", "NASDAQ": "^IXIC", "NIFTY50": "^NSEI"}
 
@@ -257,27 +258,43 @@ for name, symbol in benchmarks.items():
         s.name = name
         series_list.append(s)
 
-# ----- Portfolio Performance -----
-# ----- Portfolio Performance -----REV 3
-if combined_proc is not None:
-    tickers = combined_proc["Ticker"].tolist()
-    weights = combined_proc["Market Value"] / combined_proc["Market Value"].sum()
+# ----- India Portfolio Performance -----
+if india_proc is not None:
+    tickers = india_proc["Ticker"].tolist()
+    weights = india_proc["Market Value"] / india_proc["Market Value"].sum()
 
-    series_list_portfolio = []
+    series_list_india = []
     for t, w in zip(tickers, weights):
         hist = yf.download(t, period="1y", interval="1d", progress=False)
         if not hist.empty:
             ret = hist["Close"].pct_change().fillna(0) * w
             ret.name = t
-            series_list_portfolio.append(ret)
+            series_list_india.append(ret)
 
-    if series_list_portfolio:
-        # Align by date index
-        portfolio_df = pd.concat(series_list_portfolio, axis=1).fillna(0)
-        combined_series = portfolio_df.sum(axis=1).add(1).cumprod() - 1
-        combined_series.name = "Combined Portfolio"
-        series_list.append(combined_series)
+    if series_list_india:
+        india_df = pd.concat(series_list_india, axis=1).fillna(0)
+        india_series = india_df.sum(axis=1).add(1).cumprod() - 1
+        india_series.name = "India Portfolio"
+        series_list.append(india_series)
 
+# ----- US Portfolio Performance -----
+if us_proc is not None:
+    tickers = us_proc["Ticker"].tolist()
+    weights = us_proc["Market Value"] / us_proc["Market Value"].sum()
+
+    series_list_us = []
+    for t, w in zip(tickers, weights):
+        hist = yf.download(t, period="1y", interval="1d", progress=False)
+        if not hist.empty:
+            ret = hist["Close"].pct_change().fillna(0) * w
+            ret.name = t
+            series_list_us.append(ret)
+
+    if series_list_us:
+        us_df = pd.concat(series_list_us, axis=1).fillna(0)
+        us_series = us_df.sum(axis=1).add(1).cumprod() - 1
+        us_series.name = "US Portfolio"
+        series_list.append(us_series)
 
 # ----- Combine & Plot -----
 if series_list:
@@ -298,6 +315,7 @@ if series_list:
     st.altair_chart(chart, use_container_width=True)
 else:
     st.info("No benchmark/portfolio data available right now.")
+
 
 
 
@@ -333,6 +351,7 @@ if combined_proc is not None:
         file_name="portfolio_summary.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
 
 
 
