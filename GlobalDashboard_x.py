@@ -237,10 +237,9 @@ if us_proc is not None:
 
 # ---------------------- BENCHMARK COMPARISON ----------------------
 # ---------------------- BENCHMARK COMPARISON ----------------------
+# ---------------------- BENCHMARK + PORTFOLIO PERFORMANCE ----------------------Added in Rev 2
 st.subheader("📊 Portfolio vs Benchmarks")
-
 benchmarks = {"S&P 500": "^GSPC", "NASDAQ": "^IXIC", "NIFTY50": "^NSEI"}
-series_list = []
 
 def get_perf(ticker):
     try:
@@ -251,32 +250,31 @@ def get_perf(ticker):
     except Exception:
         return pd.Series(dtype=float)
 
-# Add benchmark series
+series_list = []
 for name, symbol in benchmarks.items():
     s = get_perf(symbol)
     if not s.empty:
         s.name = name
         series_list.append(s)
 
-# Add combined portfolio performance
-if combined_proc is not None and not combined_proc.empty:
-    try:
-        weights = combined_proc["Market Value"] / combined_proc["Market Value"].sum()
-        tickers = combined_proc["Ticker"].tolist()
+# ----- Portfolio Performance -----
+if combined_proc is not None:
+    # Weighted daily returns
+    tickers = combined_proc["Ticker"].tolist()
+    weights = combined_proc["Market Value"] / combined_proc["Market Value"].sum()
 
-        prices = yf.download(tickers, period="1y", interval="1d", progress=False)["Close"]
-        if isinstance(prices, pd.Series):  # single ticker
-            prices = prices.to_frame(tickers[0])
-        rets = prices.pct_change().dropna()
+    portfolio_returns = pd.DataFrame()
+    for t, w in zip(tickers, weights):
+        hist = yf.download(t, period="1y", interval="1d", progress=False)
+        if not hist.empty:
+            portfolio_returns[t] = hist["Close"].pct_change().fillna(0) * w
 
-        port_ret = (rets * weights.values).sum(axis=1)
-        port_cum = (1 + port_ret).cumprod() - 1
-        port_cum.name = "Combined Portfolio"
-        series_list.append(port_cum)
-    except Exception:
-        st.warning("Could not fetch combined portfolio history for chart.")
+    if not portfolio_returns.empty:
+        combined_series = portfolio_returns.sum(axis=1).add(1).cumprod() - 1
+        combined_series.name = "Combined Portfolio"
+        series_list.append(combined_series)
 
-# Plot chart
+# ----- Combine & Plot -----
 if series_list:
     chart_df = pd.concat(series_list, axis=1).reset_index().rename(columns={"index": "Date"})
     long_df = chart_df.melt(id_vars="Date", var_name="Series", value_name="Return")
@@ -294,7 +292,8 @@ if series_list:
     )
     st.altair_chart(chart, use_container_width=True)
 else:
-    st.info("Benchmark/portfolio data not available.")
+    st.info("No benchmark/portfolio data available right now.")
+
 
 
 # ---------------------- PORTFOLIO TABS ----------------------
@@ -329,4 +328,5 @@ if combined_proc is not None:
         file_name="portfolio_summary.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
 
