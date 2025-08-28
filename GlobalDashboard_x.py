@@ -258,21 +258,26 @@ for name, symbol in benchmarks.items():
         series_list.append(s)
 
 # ----- Portfolio Performance -----
+# ----- Portfolio Performance -----REV 3
 if combined_proc is not None:
-    # Weighted daily returns
     tickers = combined_proc["Ticker"].tolist()
     weights = combined_proc["Market Value"] / combined_proc["Market Value"].sum()
 
-    portfolio_returns = pd.DataFrame()
+    series_list_portfolio = []
     for t, w in zip(tickers, weights):
         hist = yf.download(t, period="1y", interval="1d", progress=False)
         if not hist.empty:
-            portfolio_returns[t] = hist["Close"].pct_change().fillna(0) * w
+            ret = hist["Close"].pct_change().fillna(0) * w
+            ret.name = t
+            series_list_portfolio.append(ret)
 
-    if not portfolio_returns.empty:
-        combined_series = portfolio_returns.sum(axis=1).add(1).cumprod() - 1
+    if series_list_portfolio:
+        # Align by date index
+        portfolio_df = pd.concat(series_list_portfolio, axis=1).fillna(0)
+        combined_series = portfolio_df.sum(axis=1).add(1).cumprod() - 1
         combined_series.name = "Combined Portfolio"
         series_list.append(combined_series)
+
 
 # ----- Combine & Plot -----
 if series_list:
@@ -328,5 +333,6 @@ if combined_proc is not None:
         file_name="portfolio_summary.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
 
 
