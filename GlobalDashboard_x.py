@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*- TOTAL CODE REPLACED REV 5
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -33,7 +33,7 @@ currency_choice = st.sidebar.radio("Display Currency", ["INR", "USD"])
 def get_fx_rate():
     try:
         fx = yf.Ticker("USDINR=X").fast_info.get("lastPrice", None)
-        if fx is None or np.isnan(fx):
+        if fx is None or (isinstance(fx, float) and np.isnan(fx)):
             data = yf.download("USDINR=X", period="1d", interval="5m", progress=False)
             fx = float(data["Close"].dropna().iloc[-1])
         return float(fx)
@@ -56,28 +56,35 @@ def load_portfolio(file, is_india=True):
 
 @st.cache_data(ttl=300)
 def fetch_quotes(symbols):
-    """Fetch reliable last prices and fundamentals for multiple tickers."""
+    """Fetch last prices & a few fundamentals for multiple tickers."""
     if not symbols:
         return {}
     quotes = {}
     try:
-        data = yf.download(symbols, period="1d", interval="1m", progress=False, group_by='ticker', threads=True)
+        data = yf.download(symbols, period="1d", interval="1m", progress=False,
+                           group_by='ticker', threads=True)
     except Exception:
         data = None
 
-    def last_price(s):
-        if s is None or len(s) == 0:
+    def last_price_from(df_like, sym_is_str):
+        try:
+            if df_like is None:
+                return np.nan
+            if sym_is_str:  # single symbol case
+                if "Close" in df_like:
+                    return float(df_like["Close"].dropna().iloc[-1])
+                return float(df_like.dropna().iloc[-1])
+            # multi
+            return float(df_like["Close"].dropna().iloc[-1])
+        except Exception:
             return np.nan
-        if isinstance(s, pd.Series):
-            return float(s.dropna().iloc[-1])
-        return float(s["Close"].dropna().iloc[-1]) if "Close" in s else np.nan
 
     for sym in symbols if isinstance(symbols, list) else [symbols]:
         lp = np.nan
         try:
             if data is not None:
                 if isinstance(symbols, str):
-                    lp = last_price(data["Close"] if "Close" in data else data)
+                    lp = last_price_from(data, True)
                 else:
                     lp = float(data[sym]["Close"].dropna().iloc[-1])
         except Exception:
@@ -89,7 +96,7 @@ def fetch_quotes(symbols):
             except Exception:
                 lp = np.nan
 
-        trailingPE, forwardPE, eps, divYield, beta = np.nan, np.nan, np.nan, np.nan, np.nan
+        trailingPE = forwardPE = eps = divYield = beta = np.nan
         try:
             tk = yf.Ticker(sym)
             info = tk.info
@@ -112,7 +119,7 @@ def fetch_quotes(symbols):
     return quotes
 
 def calc_alpha_portfolio(portfolio_df, benchmark="^GSPC"):
-    """Calculate alpha of whole portfolio vs a benchmark using numpy (no statsmodels)."""
+    """Calculate alpha of the portfolio vs a benchmark using numpy."""
     try:
         if portfolio_df is None or portfolio_df.empty:
             return np.nan
@@ -188,8 +195,8 @@ elif us_proc is not None:
 
 # ---------------------- CURRENCY CONVERSION ----------------------
 def convert_currency(df, to="INR"):
-    if df is None:
-        return None
+    if df is None or df.empty:
+        return df
     df = df.copy()
 
     if to == "USD":
@@ -225,20 +232,17 @@ def show_summary(df, title, benchmark):
     st.metric("Total Cost", f"{total_cost:,.2f} {currency_choice}")
     st.metric("Market Value", f"{total_mv:,.2f} {currency_choice}")
     st.metric("Unrealized P/L", f"{total_pl:,.2f} {currency_choice}", f"{total_pl_pct:.2f}%")
-    st.metric("Alpha (vs {})".format(benchmark), f"{alpha:.4f}")
+    st.metric(f"Alpha (vs {benchmark})", f"{alpha:.4f}")
 
 # Portfolio summaries with Alpha
-if combined_proc is not None:
+if combined_proc is not None and not combined_proc.empty:
     show_summary(combined_proc, "Overall Portfolio Summary", "^GSPC")
-if india_proc is not None:
+if india_proc is not None and not india_proc.empty:
     show_summary(india_proc, "India Portfolio Summary", "^NSEI")
-if us_proc is not None:
+if us_proc is not None and not us_proc.empty:
     show_summary(us_proc, "US Portfolio Summary", "^IXIC")
 
-# ---------------------- BENCHMARK COMPARISON ----------------------
-# ---------------------- BENCHMARK COMPARISON ----------------------
-# ---------------------- BENCHMARK + PORTFOLIO PERFORMANCE ----------------------Added in Rev 2
-# ---------------------- BENCHMARK + PORTFOLIO PERFORMANCE ----------------------Added in Rev 4
+# ---------------------- BENCHMARK + PORTFOLIO PERFORMANCE ----------------------
 st.subheader("📊 Portfolio vs Benchmarks")
 benchmarks = {"S&P 500": "^GSPC", "NASDAQ": "^IXIC", "NIFTY50": "^NSEI"}
 
@@ -251,6 +255,7 @@ def get_perf(ticker):
     except Exception:
         return pd.Series(dtype=float)
 
+# Benchmarks
 series_list = []
 for name, symbol in benchmarks.items():
     s = get_perf(symbol)
@@ -258,45 +263,58 @@ for name, symbol in benchmarks.items():
         s.name = name
         series_list.append(s)
 
-# ----- India Portfolio Performance -----
-if india_proc is not None:
-    tickers = india_proc["Ticker"].tolist()
-    weights = india_proc["Market Value"] / india_proc["Market Value"].sum()
+def build_cost_basis_series(df_proc, label):
+    """
+    Build a portfolio return series using actual cost basis:
+    per-holding series = (Close / Avg Cost_native - 1) * (Cost / TotalCost).
+    Weights use 'Cost' (already converted to the display currency);
+    Avg Cost uses 'Avg Cost' (native currency), matching Yahoo close currency.
+    """
+    if df_proc is None or df_proc.empty:
+        return None
 
-    series_list_india = []
-    for t, w in zip(tickers, weights):
-        hist = yf.download(t, period="1y", interval="1d", progress=False)
-        if not hist.empty:
-            ret = hist["Close"].pct_change().fillna(0) * w
-            ret.name = t
-            series_list_india.append(ret)
+    total_cost = df_proc["Cost"].sum()
+    if total_cost <= 0:
+        return None
 
-    if series_list_india:
-        india_df = pd.concat(series_list_india, axis=1).fillna(0)
-        india_series = india_df.sum(axis=1).add(1).cumprod() - 1
-        india_series.name = "India Portfolio"
-        series_list.append(india_series)
+    parts = []
+    for _, row in df_proc.iterrows():
+        ticker = row["Ticker"]
+        shares = row["Shares"]
+        avg_cost_native = row["Avg Cost"]  # native currency (INR for .NS, USD for US)
+        weight = (row["Cost"] / total_cost) if pd.notna(row["Cost"]) and total_cost > 0 else 0.0
 
-# ----- US Portfolio Performance -----
-if us_proc is not None:
-    tickers = us_proc["Ticker"].tolist()
-    weights = us_proc["Market Value"] / us_proc["Market Value"].sum()
+        if pd.isna(avg_cost_native) or avg_cost_native <= 0 or weight <= 0 or pd.isna(shares) or shares <= 0:
+            continue
 
-    series_list_us = []
-    for t, w in zip(tickers, weights):
-        hist = yf.download(t, period="1y", interval="1d", progress=False)
-        if not hist.empty:
-            ret = hist["Close"].pct_change().fillna(0) * w
-            ret.name = t
-            series_list_us.append(ret)
+        try:
+            hist = yf.download(ticker, period="1y", interval="1d", progress=False)
+            if hist.empty:
+                continue
+            # holding return vs its cost basis, scaled by weight
+            contrib = (hist["Close"] / float(avg_cost_native) - 1.0) * float(weight)
+            contrib.name = ticker
+            parts.append(contrib)
+        except Exception:
+            continue
 
-    if series_list_us:
-        us_df = pd.concat(series_list_us, axis=1).fillna(0)
-        us_series = us_df.sum(axis=1).add(1).cumprod() - 1
-        us_series.name = "US Portfolio"
-        series_list.append(us_series)
+    if not parts:
+        return None
 
-# ----- Combine & Plot -----
+    df_aligned = pd.concat(parts, axis=1).fillna(0.0)
+    series = df_aligned.sum(axis=1)  # already weighted; represents portfolio return vs cost basis
+    series.name = label
+    return series
+
+# India & US portfolio series (cost-basis consistent with summary)
+india_series = build_cost_basis_series(india_proc, "India Portfolio")
+us_series = build_cost_basis_series(us_proc, "US Portfolio")
+if india_series is not None:
+    series_list.append(india_series)
+if us_series is not None:
+    series_list.append(us_series)
+
+# Plot
 if series_list:
     chart_df = pd.concat(series_list, axis=1).reset_index().rename(columns={"index": "Date"})
     long_df = chart_df.melt(id_vars="Date", var_name="Series", value_name="Return")
@@ -316,11 +334,8 @@ if series_list:
 else:
     st.info("No benchmark/portfolio data available right now.")
 
-
-
-
 # ---------------------- PORTFOLIO TABS ----------------------
-if combined_proc is not None:
+if combined_proc is not None and not combined_proc.empty:
     tabs = st.tabs(["Indian Portfolio", "US Portfolio", "Combined Portfolio"])
     portfolios = {"Indian Portfolio": india_proc, "US Portfolio": us_proc, "Combined Portfolio": combined_proc}
 
@@ -328,6 +343,7 @@ if combined_proc is not None:
         with tab:
             if df is not None and not df.empty:
                 st.dataframe(df, use_container_width=True)
+                # CSV download
                 csv = df.to_csv(index=False).encode()
                 st.download_button(
                     label="Download CSV",
@@ -337,12 +353,12 @@ if combined_proc is not None:
                 )
 
 # ---------------------- EXCEL EXPORT ----------------------
-if combined_proc is not None:
+if combined_proc is not None and not combined_proc.empty:
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        if india_proc is not None:
+        if india_proc is not None and not india_proc.empty:
             india_proc.to_excel(writer, sheet_name="India", index=False)
-        if us_proc is not None:
+        if us_proc is not None and not us_proc.empty:
             us_proc.to_excel(writer, sheet_name="US", index=False)
         combined_proc.to_excel(writer, sheet_name="Combined", index=False)
     st.sidebar.download_button(
@@ -351,6 +367,26 @@ if combined_proc is not None:
         file_name="portfolio_summary.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+# ---------------------- CONSISTENCY CHECK ----------------------REV 5
+def check_alignment(proc_df, series, label):
+    if proc_df is None or proc_df.empty or series is None or series.empty:
+        return
+    # Summary return
+    total_cost = proc_df["Cost"].sum()
+    total_mv = proc_df["Market Value"].sum()
+    summary_ret = (total_mv - total_cost) / total_cost
+
+    # Chart return (last available point)
+    chart_ret = series.dropna().iloc[-1]
+
+    st.caption(
+        f"🔎 {label}: Summary return = {summary_ret:.2%}, "
+        f"Chart return = {chart_ret:.2%}, "
+        f"Difference = {(summary_ret - chart_ret):.2%}"
+    )
+
+check_alignment(india_proc, india_series, "India Portfolio")
+check_alignment(us_proc, us_series, "US Portfolio")
 
 
 
